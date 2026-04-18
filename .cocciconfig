@@ -1,3 +1,6 @@
 [spatch]
 	options = --timeout 200
 	options = --use-gitgrep
+	options = -D CONFIG_X86_64=1
+	options = -D CONFIG_X86_MINIMUM_CPU_FAMILY=64
+	options = --macro-file scripts/coccinelle/nexo_modern.h
