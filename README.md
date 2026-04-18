@@ -16,3 +16,5 @@
 - v7.1
 
 # based on linux rollout
+- every 3-14 days an update
+- every year an major release
