@@ -5,10 +5,14 @@
 - Nexo Kernel
 
 ## Current version
-- v7.0
-## Coming soon
 - v7.0.1
+## Coming soon
+- v7.0.2
 ### how we produce
 - small patches (easy rollback)
 #### coming later
 - v7.1
+##### coming VERY later
+- v7.1
+
+# based on linux rollout
