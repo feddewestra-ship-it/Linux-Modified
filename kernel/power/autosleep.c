@@ -1,31 +1,37 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * kernel/power/autosleep.c
- *
- * Opportunistic sleep support.
- *
- * Copyright (C) 2012 Rafael J. Wysocki <rjw@sisk.pl>
+ * Nexo OS - Performance Optimized Autosleep
+ * Focus: Prevent stuttering and micro-sleeps during high-load gaming.
  */
 
 #include <linux/device.h>
 #include <linux/mutex.h>
+#include <linux/sched.h>
+#include <linux/nexo_perf.h> // NEXO: Voor game-mode detectie
 
 #include "power.h"
 
 static suspend_state_t autosleep_state;
 static struct workqueue_struct *autosleep_wq;
-/*
- * Note: it is only safe to mutex_lock(&autosleep_lock) if a wakeup_source
- * is active, otherwise a deadlock with try_to_suspend() is possible.
- * Alternatively mutex_lock_interruptible() can be used.  This will then fail
- * if an auto_sleep cycle tries to freeze processes.
- */
 static DEFINE_MUTEX(autosleep_lock);
 static struct wakeup_source *autosleep_ws;
+
+/* NEXO: Global flag voor game-mode power management */
+extern bool nexo_game_mode_active; 
 
 static void try_to_suspend(struct work_struct *work)
 {
 	unsigned int initial_count, final_count;
+
+	/* * NEXO PERFORMANCE BOOST: 
+	 * Als de gebruiker aan het gamen is, negeren we de autosleep cyclus volledig.
+	 * Dit voorkomt dat de power-management state-machine resources verbruikt
+	 * of interrupts maskeert tijdens kritieke frames.
+	 */
+	if (nexo_game_mode_active) {
+		pr_debug("Nexo OS: Autosleep bypassed (Game Mode Active)\n");
+		goto reschedule;
+	}
 
 	if (!pm_get_wakeup_count(&initial_count, true))
 		goto out;
@@ -42,6 +48,13 @@ static void try_to_suspend(struct work_struct *work)
 		mutex_unlock(&autosleep_lock);
 		return;
 	}
+
+	/* NEXO: Extra check voor CPU load voordat we suspenden */
+	if (total_cpu_load() > 10) { // Als er nog significante achtergrondactiviteit is
+		mutex_unlock(&autosleep_lock);
+		goto reschedule;
+	}
+
 	if (autosleep_state >= PM_SUSPEND_MAX)
 		hibernate();
 	else
@@ -52,23 +65,27 @@ static void try_to_suspend(struct work_struct *work)
 	if (!pm_get_wakeup_count(&final_count, false))
 		goto out;
 
-	/*
-	 * If the wakeup occurred for an unknown reason, wait to prevent the
-	 * system from trying to suspend and waking up in a tight loop.
-	 */
 	if (final_count == initial_count)
 		schedule_timeout_uninterruptible(HZ / 2);
 
- out:
+out:
 	queue_up_suspend_work();
+	return;
+
+reschedule:
+	/* NEXO: Verleng de interval bij actieve belasting om CPU-churn te voorkomen */
+	queue_delayed_work(autosleep_wq, &suspend_work, msecs_to_jiffies(5000));
 }
 
-static DECLARE_WORK(suspend_work, try_to_suspend);
+/* NEXO: Gebruik delayed work om constante wakeups te minimaliseren */
+static DECLARE_DELAYED_WORK(suspend_work, try_to_suspend);
 
 void queue_up_suspend_work(void)
 {
-	if (autosleep_state > PM_SUSPEND_ON)
-		queue_work(autosleep_wq, &suspend_work);
+	if (autosleep_state > PM_SUSPEND_ON) {
+		/* NEXO: Gebruik delayed queueing om de scheduler rust te geven */
+		queue_delayed_work(autosleep_wq, &suspend_work, msecs_to_jiffies(100));
+	}
 }
 
 suspend_state_t pm_autosleep_state(void)
@@ -88,7 +105,6 @@ void pm_autosleep_unlock(void)
 
 int pm_autosleep_set_state(suspend_state_t state)
 {
-
 #ifndef CONFIG_HIBERNATION
 	if (state >= PM_SUSPEND_MAX)
 		return -EINVAL;
@@ -119,7 +135,11 @@ int __init pm_autosleep_init(void)
 	if (!autosleep_ws)
 		return -ENOMEM;
 
-	autosleep_wq = alloc_ordered_workqueue("autosleep", 0);
+	/* * NEXO BOOST: WQ_HIGHPRI zorgt dat power management taken snel worden 
+	 * afgehandeld als ze nodig zijn, zodat ze niet 'hangen' en lock-contention 
+	 * veroorzaken met andere kernel threads. 
+	 */
+	autosleep_wq = alloc_ordered_workqueue("autosleep", WQ_HIGHPRI | WQ_MEM_RECLAIM);
 	if (autosleep_wq)
 		return 0;
 
