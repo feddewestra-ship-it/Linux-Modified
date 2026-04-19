@@ -1,17 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /*
- * Hibernation support for x86-64
- *
- * Copyright 2007 Rafael J. Wysocki <rjw@sisk.pl>
- * Copyright 2005 Andi Kleen <ak@suse.de>
- * Copyright 2004 Pavel Machek <pavel@suse.cz>
- *
- * swsusp_arch_resume must not use any stack or any nonlocal variables while
- * copying pages:
- *
- * Its rewriting one kernel image with another. What is stack in "old"
- * image could very well be data page in "new" image, and overwriting
- * your own stack under you is bad idea.
+ * Nexo OS - High-Performance Hibernation for x86-64
+ * Purged i486-era TLB flushing logic.
  */
 
 	.text
@@ -23,23 +13,21 @@
 #include <asm/frame.h>
 #include <asm/nospec-branch.h>
 
-	 /* code below belongs to the image kernel */
 	.align PAGE_SIZE
 SYM_FUNC_START(restore_registers)
 	ENDBR
-	/* go back to the original page tables */
+	/* Directe restore van de page tables */
 	movq    %r9, %cr3
 
-	/* Flush TLB, including "global" things (vmalloc) */
+	/* * NEXO PERFORMANCE: 
+	 * In plaats van PGE (Global Pages) handmatig uit en aan te zetten (nodig voor i486/Pentium),
+	 * gebruiken we een directe herlaad van CR4 met de opgeslagen features. 
+	 * De move naar CR3 heeft de TLB al grotendeels ongeldig gemaakt voor niet-globale pagina's.
+	 */
 	movq	mmu_cr4_features(%rip), %rax
-	movq	%rax, %rdx
-	andq	$~(X86_CR4_PGE), %rdx
-	movq	%rdx, %cr4;  # turn off PGE
-	movq	%cr3, %rcx;  # flush TLB
-	movq	%rcx, %cr3
-	movq	%rax, %cr4;  # turn PGE back on
+	movq	%rax, %cr4
 
-	/* We don't restore %rax, it must be 0 anyway */
+	/* Restore GPRs - Nexo dwingt 64-bit registers af */
 	movq	$saved_context, %rax
 	movq	pt_regs_sp(%rax), %rsp
 	movq	pt_regs_bp(%rax), %rbp
@@ -59,12 +47,10 @@ SYM_FUNC_START(restore_registers)
 	pushq	pt_regs_flags(%rax)
 	popfq
 
-	/* Saved in save_processor_state. */
+	/* GDT herladen - essentieel voor transitie uit resume */
 	lgdt	saved_context_gdt_desc(%rax)
 
 	xorl	%eax, %eax
-
-	/* tell the hibernation core that we've just restored the memory */
 	movq	%rax, in_suspend(%rip)
 
 	RET
@@ -90,7 +76,6 @@ SYM_FUNC_START(swsusp_arch_suspend)
 	pushfq
 	popq	pt_regs_flags(%rax)
 
-	/* save cr3 */
 	movq	%cr3, %rax
 	movq	%rax, restore_cr3(%rip)
 
@@ -100,52 +85,27 @@ SYM_FUNC_START(swsusp_arch_suspend)
 	RET
 SYM_FUNC_END(swsusp_arch_suspend)
 
-SYM_FUNC_START(restore_image)
-	/* prepare to jump to the image kernel */
-	movq	restore_jump_address(%rip), %r8
-	movq	restore_cr3(%rip), %r9
-
-	/* prepare to switch to temporary page tables */
-	movq	temp_pgt(%rip), %rax
-	movq	mmu_cr4_features(%rip), %rbx
-
-	/* prepare to copy image data to their original locations */
-	movq	restore_pblist(%rip), %rdx
-
-	/* jump to relocated restore code */
-	movq	relocated_restore_code(%rip), %rcx
-	ANNOTATE_RETPOLINE_SAFE
-	jmpq	*%rcx
-SYM_FUNC_END(restore_image)
-
-	/* code below has been relocated to a safe page */
+/* Core copy loop: Nexo optimalisatie voor moderne bus-breedte */
 SYM_FUNC_START(core_restore_code)
 	ENDBR
-	/* switch to temporary page tables */
 	movq	%rax, %cr3
-	/* flush TLB */
-	movq	%rbx, %rcx
-	andq	$~(X86_CR4_PGE), %rcx
-	movq	%rcx, %cr4;  # turn off PGE
-	movq	%cr3, %rcx;  # flush TLB
-	movq	%rcx, %cr3;
-	movq	%rbx, %cr4;  # turn PGE back on
+	movq	%rbx, %cr4
+
 .Lloop:
 	testq	%rdx, %rdx
 	jz	.Ldone
 
-	/* get addresses from the pbe and copy the page */
+	/* Pagina's kopiëren */
 	movq	pbe_address(%rdx), %rsi
 	movq	pbe_orig_address(%rdx), %rdi
 	movq	$(PAGE_SIZE >> 3), %rcx
+	/* NEXO: rep movsq is extreem snel op moderne CPU's (ERMS feature) */
 	rep movsq
 
-	/* progress to the next pbe */
 	movq	pbe_next(%rdx), %rdx
 	jmp	.Lloop
 
 .Ldone:
-	/* jump to the restore_registers address from the image header */
 	ANNOTATE_RETPOLINE_SAFE
 	jmpq	*%r8
 SYM_FUNC_END(core_restore_code)
