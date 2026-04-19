@@ -1,12 +1,32 @@
-edition = "2021"
+# Nexo OS - Rust Formatting Configuration (Edition 2026)
+# Focus: Zero-cost abstractions, documentation clarity, and strict safety.
+
+edition = "2024" # In 2026 is de 2024-editie de stabiele industriestandaard
 newline_style = "Unix"
 
-# Unstable options that help catching some mistakes in formatting and that we may want to enable
-# when they become stable.
-#
-# They are kept here since they are useful to run from time to time.
-#format_code_in_doc_comments = true
-#reorder_impl_items = true
-#comment_width = 100
-#wrap_comments = true
-#normalize_comments = true
+# --- Nexo Modernization Flags ---
+
+# We activeren nu de voorheen 'unstable' opties die in 2026 standaard zijn.
+# Dit zorgt ervoor dat codevoorbeelden in onze kernel-docu altijd compileren en kloppen.
+format_code_in_doc_comments = true
+
+# Reorder impl items zorgt voor een consistente volgorde van functies in implementaties.
+# Dit helpt bij het snel scannen van de code tijdens debugging.
+reorder_impl_items = true
+
+# --- Commentaar Beheer (Nexo Stijl) ---
+# We verruimen de breedte iets voor moderne 1440p+ schermen die in dev-omgevingen gebruikt worden.
+comment_width = 110
+wrap_comments = true
+normalize_comments = true
+
+# --- Nexo Performance & Safety ---
+# Dwing het gebruik van 'shorthand' af voor structs om de code compacter te houden.
+use_field_init_shorthand = true
+
+# Verwijder onnodige haakjes die de leesbaarheid van complexe matches hinderen.
+remove_nested_parens = true
+
+# Sorteer imports alfabetisch in groepen: std, core, en dan nexo_kernel crates.
+reorder_imports = true
+group_imports = "StdExternalCrate"
