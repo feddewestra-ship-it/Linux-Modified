@@ -1,16 +1,83 @@
-What:		/sys/kernel/debug/olpc-ec/cmd
-Date:		Dec 2011
-KernelVersion:	3.4
-Contact:	devel@lists.laptop.org
-Description:
+Nexo OS Kernel Documentation
+OLPC Embedded Controller Debug Command Interface
+📁 /sys/kernel/debug/olpc-ec/cmd
 
-A generic interface for executing OLPC Embedded Controller commands and
-reading their responses.
+Date: December 2011
+Kernel Version: 3.4
+Contact: devel@lists.laptop.org
 
-To execute a command, write data with the format: CC:N A A A A
-CC is the (hex) command, N is the count of expected reply bytes, and A A A A
-are optional (hex) arguments.
+Description
 
-To read the response (if any), read from the generic node after executing
-a command. Hex reply bytes will be returned, *whether or not* they came from
-the immediately previous command.
+This debug interface provides a generic command execution channel for interacting with the OLPC Embedded Controller (EC).
+
+It allows user space to:
+
+send raw EC commands
+optionally pass arguments
+retrieve raw responses from the EC
+
+This interface is primarily intended for debugging and low-level hardware interaction.
+
+⚠️ Scope and Safety
+Debug-only interface (debugfs)
+No ABI stability guarantees
+Unsafe for production automation without strict validation
+Command Format (Write Interface)
+
+To execute a command, write to the node using the following format:
+
+CC:N A A A A
+Fields
+Field	Meaning
+CC	Command byte (hex)
+N	Expected number of reply bytes
+A	Optional argument bytes (hex, space-separated)
+Behavior
+Command is immediately forwarded to the Embedded Controller
+Arguments are optional depending on command type
+No strict validation of argument structure at kernel level
+Response Format (Read Interface)
+
+After issuing a command, read from the same node:
+
+<hex reply bytes>
+Behavior Notes
+Returns raw hex bytes from EC response buffer
+Response is not strictly tied to the most recent command
+May include leftover or pending EC output
+
+This implies:
+
+Reads are stateful but not transactional
+Caller must manage synchronization logic in user space
+Design Characteristics
+1. Weak Coupling Model
+Write = command injection
+Read = response stream access
+No strict pairing guarantee
+2. Debug-Oriented Behavior
+Prioritizes visibility over correctness guarantees
+Intended for firmware and EC debugging workflows
+3. Raw Data Exposure
+No structured parsing in kernel
+All interpretation is delegated to user space tools
+Nexo OS Kernel Notes 🧠
+
+In a Nexo OS context, this interface would typically be classified as:
+
+low-level hardware debug channel
+suitable for:
+EC firmware validation
+embedded controller diagnostics
+not suitable for:
+production device control logic
+deterministic command-response systems
+
+Recommended enhancement layer:
+
+add a transaction ID wrapper
+introduce command-response binding buffer
+optional safe-mode validation layer
+Deprecation Status
+Status: Active (Debug Interface)
+No scheduled removal
