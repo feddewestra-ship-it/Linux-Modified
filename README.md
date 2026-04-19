@@ -10,10 +10,12 @@
 - v7.0.2
 ### how we produce
 - small patches (easy rollback)
+- every x.x a great enhancement
+- every x an BIG feature update
 #### coming later
 - v7.1
 ##### coming VERY later
-- v7.1
+- v7.2
 
 # based on linux rollout
 - every 3-14 days an update
