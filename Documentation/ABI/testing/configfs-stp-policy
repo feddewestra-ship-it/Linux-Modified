@@ -1,48 +1,80 @@
-What:		/config/stp-policy
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		This group contains policies mandating Master/Channel allocation
-		for software sources wishing to send trace data over an STM
-		device.
+Nexo OS Kernel Documentation
+STM Trace Policy Configuration Interface
+📁 /config/stp-policy
 
-What:		/config/stp-policy/<device>.<policy>
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		This group is the root of a policy; its name is a concatenation
-		of an stm device name to which this policy applies and an
-		arbitrary string. If <device> part doesn't match an existing
-		stm device, mkdir will fail with ENODEV; if that device already
-		has a policy assigned to it, mkdir will fail with EBUSY.
+Date: June 2015
+Kernel Version: 4.3
 
-What:		/config/stp-policy/<device>.<policy>/device
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		STM device to which this policy applies, read only. Same as the
-		<device> component of its parent directory.
+Description
 
-What:		/config/stp-policy/<device>.<policy>/<node>
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		Policy node is a string identifier that software clients will
-		use to request a master/channel to be allocated and assigned to
-		them.
+This directory contains policies that define master and channel allocation rules for software sources that transmit trace data through an STM (System Trace Macrocell) device.
 
-What:		/config/stp-policy/<device>.<policy>/<node>/masters
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		Range of masters from which to allocate for users of this node.
-		Write two numbers: the first master and the last master number.
+These policies control how trace resources are assigned and isolated across consumers.
 
-What:		/config/stp-policy/<device>.<policy>/<node>/channels
-Date:		June 2015
-KernelVersion:	4.3
-Description:
-		Range of channels from which to allocate for users of this node.
-		Write two numbers: the first channel and the last channel
-		number.
+📁 Policy Directory
+/config/stp-policy/<device>.<policy>
 
+Date: June 2015
+Kernel Version: 4.3
+
+Description
+
+This directory is the root of a single STM allocation policy.
+
+The name is composed of:
+
+<device>: STM device name
+<policy>: arbitrary policy identifier string
+Creation Rules
+
+When creating this directory:
+
+If <device> does not match an existing STM device → ENODEV
+If the device already has an active policy → EBUSY
+📁 Device Binding (Read-only)
+/config/stp-policy/<device>.<policy>/device
+Description
+
+Read-only file that indicates the STM device associated with this policy.
+
+Always identical to the <device> portion of the parent directory name
+Cannot be modified
+📁 Policy Node
+/config/stp-policy/<device>.<policy>/<node>
+Description
+
+A policy node is a string identifier used by software clients to request allocation of STM trace resources.
+
+It represents a logical consumer of:
+
+masters
+channels
+📁 Masters Allocation Range
+/config/stp-policy/<device>.<policy>/<node>/masters
+Description
+
+Defines the range of STM masters available to this node.
+
+Format
+<first_master> <last_master>
+Behavior
+Allocation is restricted to the specified range
+Used to enforce isolation between different trace consumers
+📁 Channels Allocation Range
+/config/stp-policy/<device>.<policy>/<node>/channels
+Description
+
+Defines the range of STM channels available to this node.
+
+Format
+<first_channel> <last_channel>
+Behavior
+Limits channel allocation scope
+Prevents overlap between independent policy nodes
+🧠 Design Notes (Nexo OS)
+Policies define strict resource partitioning rules
+Allocation is deterministic and range-based
+Invalid configuration is rejected at creation time (no fallback behavior)
+⚠️ Deprecation Status
+Status: Active ABI
+No deprecation scheduled
