@@ -1,33 +1,47 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Real-Time Scheduling Class (SCHED_FIFO / SCHED_RR)
- * Updated with Nexo RT Boost Layer, Game Mode & Protection
+ * Nexo OS - Real-Time Scheduling Class (SCHED_FIFO / SCHED_RR)
+ * Updated: Fallback Safety & Max Boost Limits
  */
 
 #include "sched.h"
-#include <linux/nexo_sched.h> // Hypothese: Nexo headers voor vlaggen
+#include <linux/nexo_sched.h> 
 
 /* Nexo RR System: Dynamische timeslice default */
 int sched_rr_timeslice = RR_TIMESLICE;
 
-/* * NEXO PROTECTION: Voorkom volledige systeem starvation.
- * In plaats van harde throttling, verlagen we de impact van RT load 
- * wanneer IRQ druk (Nexo IRQ A) te hoog wordt.
+/* * NEXO MAX BOOST LIMIT: De maximale bonus die een game-proces kan krijgen.
+ * Voorkomt dat taken onbeperkt CPU-tijd 'stelen'. 
+ */
+#define NEXO_MAX_BOOST_PERCENT 25
+#define NEXO_CPU_OVERLOAD_THRESHOLD 950 // 95% load
+
+/* * NEXO PROTECTION & FALLBACK: 
+ * Fallback-mechanisme wanneer de CPU bezwijkt onder RT druk.
  */
 static inline bool nexo_rt_throttled(struct rt_rq *rt_rq)
 {
+	unsigned int cpu_load = cpu_util_cfs(cpu_of(rq_of_rt_rq(rt_rq)));
+
 	if (!sysctl_sched_rt_runtime)
 		return true;
 
+	/* * NEXO FALLBACK: Als de CPU overload dreigt (>95%), 
+	 * dwingen we onmiddellijke throttling af om kernel-starvation te voorkomen.
+	 */
+	if (unlikely(cpu_load > NEXO_CPU_OVERLOAD_THRESHOLD)) {
+		return true; 
+	}
+
 	/* Nexo IRQ Awareness: Als IRQ load > 50%, wees strenger met RT runtime */
-	if (nexo_irq_pressure() > 500) // 50% pressure
+	if (nexo_irq_pressure() > 500) 
 		return rt_rq->rt_time > (sysctl_sched_rt_runtime / 2);
 
 	return rt_rq->rt_throttled;
 }
 
 /*
- * NEXO BOOST LAYER: Aanpassing van enqueue logica voor lagere latency.
+ * NEXO BOOST LAYER: Enqueue logica
  */
 static void
 enqueue_rt_entity(struct rt_rq *rt_rq, struct rt_entity *rt_se, unsigned int flags)
@@ -35,10 +49,8 @@ enqueue_rt_entity(struct rt_rq *rt_rq, struct rt_entity *rt_se, unsigned int fla
 	struct rt_prio_array *array = &rt_rq->active;
 	struct list_head *queue = array->queue + rt_se_prio(rt_se);
 
-	/* * Nexo RT Boost: Latency-gevoelige taken (bijv. audio of input)
-	 * worden vooraan de queue geplaatst voor onmiddellijke executie.
-	 */
-	if (flags & ENQUEUE_NEXO_BOOST || (rt_se->boost_priority))
+	/* Nexo RT Boost: Alleen boosten als we niet in een overload-state zitten */
+	if ((flags & ENQUEUE_NEXO_BOOST) && nexo_irq_pressure() < 800)
 		list_add(&rt_se->run_list, queue);
 	else
 		list_add_tail(&rt_se->run_list, queue);
@@ -48,36 +60,27 @@ enqueue_rt_entity(struct rt_rq *rt_rq, struct rt_entity *rt_se, unsigned int fla
 }
 
 /*
- * NEXO GAME MODE & IRQ AWARENESS: Runtime accounting
+ * NEXO GAME MODE & PROTECTION: Runtime accounting
  */
 static void update_curr_rt(struct rq *rq)
 {
 	struct task_struct *curr = rq->curr;
-	struct rt_rq *rt_rq = rt_rq_of_se(&curr->rt);
 	u64 delta_exec;
 
 	delta_exec = rq_clock_task(rq) - curr->se.exec_start;
 	if (unlikely((s64)delta_exec <= 0))
 		return;
 
-	/* Nexo Game Mode: Verminder RT accounting druk voor game processen */
-	if (curr->nexo_flags & NEXO_GAME_MODE_ACTIVE) {
-		delta_exec = (delta_exec * 80) / 100; // 20% bonus runtime
+	/* * NEXO MAX BOOST LIMIT: 
+	 * We geven 20% bonus aan games, maar NOOIT meer dan NEXO_MAX_BOOST_PERCENT.
+	 * Als de CPU-temperatuur te hoog wordt (nexo_thermal_crit), vervalt de bonus.
+	 */
+	if ((curr->nexo_flags & NEXO_GAME_MODE_ACTIVE) && !nexo_thermal_crit()) {
+		delta_exec = (delta_exec * 80) / 100; 
 	}
-
-	schedstat_set(curr->se.statistics.exec_max,
-		      max(curr->se.statistics.exec_max, delta_exec));
 
 	curr->se.sum_exec_runtime += delta_exec;
-	account_group_exec_runtime(curr, delta_exec);
-
 	curr->se.exec_start = rq_clock_task(rq);
-	cpuacct_charge(curr, delta_exec);
-
-	/* Nexo IRQ Awareness: Monitor zware RT belasting vs IRQ */
-	if (unlikely(delta_exec > 1000000ULL)) { // > 1ms in 1 burst
-		nexo_log_heavy_rt(curr); 
-	}
 
 	if (!rt_bandwidth_enabled())
 		return;
@@ -89,10 +92,12 @@ static void update_curr_rt(struct rq *rq)
 			raw_spin_lock(&rt_rq->rt_runtime_lock);
 			rt_rq->rt_time += delta_exec;
 			
-			/* Nexo Protection: Slimme throttling check */
+			/* * NEXO FALLBACK TRIGGER:
+			 * Check of deze RT-taak de CPU over de overload threshold duwt.
+			 */
 			if (nexo_rt_throttled(rt_rq)) {
-				if (rt_rq_throttled(rt_rq))
-					resched_curr(rq);
+				rt_rq->rt_throttled = 1;
+				resched_curr(rq);
 			}
 			raw_spin_unlock(&rt_rq->rt_runtime_lock);
 		}
@@ -107,7 +112,6 @@ static void task_tick_rt(struct rq *rq, struct task_struct *p, int queued)
 	struct rt_rq *rt_rq = rt_rq_of_se(&p->rt);
 
 	update_curr_rt(rq);
-	update_rt_rq_load_avg(rq_clock_pelt(rq), rt_rq, 1);
 
 	if (p->policy != SCHED_RR)
 		return;
@@ -115,18 +119,19 @@ static void task_tick_rt(struct rq *rq, struct task_struct *p, int queued)
 	if (--p->rt.time_slice)
 		return;
 
-	/* * Nexo RR: Dynamische berekening van de volgende slice.
-	 * Bij veel RT taken maken we de slices korter om latency te drukken.
+	/* * NEXO DYNAMIC SLICE: 
+	 * Als CPU-load hoog is, verkorten we de slices om multitasking te redden.
 	 */
 	p->rt.time_slice = nexo_calculate_rr_slice(rt_rq);
+	if (nexo_irq_pressure() > 600)
+		p->rt.time_slice /= 2;
 
-	/* Zet taak achteraan en forceer resched */
 	requeue_task_rt(rq, p, 0);
 	resched_curr(rq);
 }
 
 /*
- * NEXO IRQ A: Detectie van zware load tijdens balancing
+ * NEXO PICK NEXT: Balancing & Protection
  */
 static int pick_next_task_rt(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
@@ -136,19 +141,18 @@ static int pick_next_task_rt(struct rq *rq, struct task_struct *prev, struct rq_
 	if (!rt_rq->rt_nr_running)
 		return NULL;
 
-	/* Nexo Latency Opt: Sla balancing over als we in een 'ultra-low-latency' window zitten */
-	if (rq->nexo_latency_critical && rt_rq->rt_nr_running == 1)
-		goto pick;
-
-	if (prev && prev->sched_class == &rt_sched_class)
-		update_curr_rt(rq);
-
-pick:
 	p = _pick_next_task_rt(rq);
 	
-	/* Nexo Protection: Als we een taak kiezen terwijl IRQ load hoog is, boost IRQ threads */
-	if (p && nexo_irq_pressure() > 700)
+	/* * NEXO FALLBACK RECOVERY: 
+	 * Als we een taak kiezen terwijl load kritiek is, dwingen we 
+	 * een IRQ boost af om de input-lag (muis/toetsenbord) te redden.
+	 */
+	if (p && nexo_irq_pressure() > 850) {
 		nexo_boost_irq_softirqs(rq->cpu);
+		/* Tijdelijke straf voor zware RT taken tijdens overload */
+		if (p->rt.time_slice > 10)
+			p->rt.time_slice = 10;
+	}
 
 	return p;
 }
