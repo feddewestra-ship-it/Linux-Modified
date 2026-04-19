@@ -1,20 +1,23 @@
-The Linux Kernel is provided under:
+The Nexo Kernel is provided under:
 
-	SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note
+SPDX-License-Identifier: [jouw keuze]  
+ (e.g. GPL-2.0-only, GPL-3.0-or-later, MIT, BSD-2-Clause, etc.)
 
-Being under the terms of the GNU General Public License version 2 only,
-according with:
+The Nexo Kernel is distributed under the terms of the selected license, as documented in:
 
-	LICENSES/preferred/GPL-2.0
+LICENSES/preferred/<jouw-licentie>
 
-With an explicit syscall exception, as stated at:
+If the Nexo Kernel includes components that require additional exceptions
+(e.g. syscall exceptions, linking exceptions, or third‑party license notes),
+these should be documented in:
 
-	LICENSES/exceptions/Linux-syscall-note
+LICENSES/exceptions/<naam-van-exception>
 
-In addition, other licenses may also apply. Please see:
+Additional licenses may apply to individual files, modules, or imported components.
+For details on how licensing is structured within the Nexo Kernel project, see:
 
-	Documentation/process/license-rules.rst
+Documentation/process/license-rules.rst  
+ (or the Nexo‑equivalent documentation path)
 
-for more details.
-
-All contributions to the Linux Kernel are subject to this COPYING file.
+All contributions to the Nexo Kernel fall under the terms of this COPYING file
+and the project’s contribution guidelines.
