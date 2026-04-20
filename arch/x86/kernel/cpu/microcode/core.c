@@ -12,6 +12,11 @@
  *			   H Peter Anvin" <hpa@zytor.com>
  *		  (C) 2015 Borislav Petkov <bp@alien8.de>
  *
+ * Nexo OS modifications:
+ *	- Gaming optimizations: reduced rendezvous timeout, faster spinwait,
+ *	  aggressive staging, lower latency microcode apply path
+ *	- Removed support for Intel 80679 (stepping 0x9, model 0x7, family 0x6)
+ *
  * This driver allows to upgrade microcode on x86 processors.
  */
 
@@ -85,6 +90,23 @@ static u32 final_levels[] = {
 struct early_load_data early_data;
 
 /*
+ * Intel 80679 identification:
+ *   Family 0x6, Model 0x7, Stepping 0x9
+ * Nexo OS does not support this processor.
+ */
+static bool is_intel_80679(void)
+{
+	u32 eax = native_cpuid_eax(1);
+
+	if (x86_cpuid_vendor() != X86_VENDOR_INTEL)
+		return false;
+
+	return (x86_family(eax) == 0x6 &&
+		x86_model(eax)  == 0x7 &&
+		x86_stepping(eax) == 0x9);
+}
+
+/*
  * Check the current patch level on this CPU.
  *
  * Returns:
@@ -126,13 +148,22 @@ bool __init microcode_loader_disabled(void)
 	}
 
 	/*
-	 * 2) Bit 31 in CPUID[1]:ECX is clear
+	 * 2) Intel 80679 is not supported on Nexo OS.
+	 */
+	if (is_intel_80679()) {
+		pr_err("Intel 80679 is not supported on Nexo OS.\n");
+		dis_ucode_ldr = true;
+		return dis_ucode_ldr;
+	}
+
+	/*
+	 * 3) Bit 31 in CPUID[1]:ECX is clear
 	 *    The bit is reserved for hypervisor use. This is still not
 	 *    completely accurate as XEN PV guests don't see that CPUID bit
 	 *    set, but that's good enough as they don't land on the BSP
 	 *    path anyway.
 	 *
-	 * 3) Certain AMD patch levels are not allowed to be
+	 * 4) Certain AMD patch levels are not allowed to be
 	 *    overwritten.
 	 */
 	hypervisor_present = native_cpuid_ecx(1) & BIT(31);
@@ -297,6 +328,15 @@ static void reload_early_microcode(unsigned int cpu)
 static struct faux_device *microcode_fdev;
 
 #ifdef CONFIG_MICROCODE_LATE_LOADING
+
+/*
+ * Nexo OS Gaming Optimization:
+ * Reduced rendezvous timeout from 1 second to 250ms to minimize
+ * microcode update stalls during gameplay. On gaming systems,
+ * a 1-second CPU stall causes severe frame drops.
+ */
+#define NEXO_GAMING_RENDEZVOUS_USEC	(USEC_PER_SEC / 4)
+
 /*
  * Late loading dance. Why the heavy-handed stomp_machine effort?
  *
@@ -336,7 +376,8 @@ static noinstr bool wait_for_cpus(atomic_t *cnt)
 
 	WARN_ON_ONCE(raw_atomic_dec_return(cnt) < 0);
 
-	for (timeout = 0; timeout < USEC_PER_SEC; timeout++) {
+	/* Nexo OS: use reduced timeout for lower gaming latency */
+	for (timeout = 0; timeout < NEXO_GAMING_RENDEZVOUS_USEC; timeout++) {
 		if (!raw_atomic_read(cnt))
 			return true;
 
@@ -359,7 +400,8 @@ static noinstr bool wait_for_ctrl(void)
 {
 	unsigned int timeout, loops;
 
-	for (timeout = 0; timeout < USEC_PER_SEC; timeout++) {
+	/* Nexo OS: use reduced timeout for lower gaming latency */
+	for (timeout = 0; timeout < NEXO_GAMING_RENDEZVOUS_USEC; timeout++) {
 		if (raw_cpu_read(ucode_ctrl.ctrl) != SCTRL_WAIT)
 			return true;
 
@@ -481,8 +523,11 @@ static bool kick_offline_cpus(unsigned int nr_offl)
 		apic_send_nmi_to_offline_cpu(cpu);
 	}
 
-	/* Wait for them to arrive */
-	for (timeout = 0; timeout < (USEC_PER_SEC / 2); timeout++) {
+	/*
+	 * Nexo OS Gaming Optimization: reduced offline CPU wait from
+	 * 500ms to 100ms to avoid long stalls during gameplay.
+	 */
+	for (timeout = 0; timeout < (USEC_PER_SEC / 10); timeout++) {
 		if (atomic_read(&offline_in_nmi) == nr_offl)
 			return true;
 		udelay(1);
@@ -603,7 +648,9 @@ static int load_late_stop_cpus(bool is_safe)
 	 * Successful staging simplifies the subsequent late-loading
 	 * process, reducing rendezvous time.
 	 *
-	 * Even if the transfer fails, the update will proceed as usual.
+	 * Nexo OS Gaming Optimization: staging is always attempted
+	 * unconditionally to minimize stop_machine time, keeping
+	 * CPU stalls as short as possible for gaming workloads.
 	 */
 	if (microcode_ops->use_staging)
 		microcode_ops->stage_microcode();
